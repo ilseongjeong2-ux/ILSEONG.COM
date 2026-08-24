@@ -83,6 +83,9 @@
       </select>
     </div>
     <button class="btn" onclick="resetFilters()">필터 초기화</button>
+    <button class="btn" onclick="exportCsv()">CSV 내보내기</button>
+    <button class="btn" onclick="document.getElementById('csvFileInput').click()">CSV 불러오기</button>
+    <input type="file" id="csvFileInput" accept=".csv,text/csv" onchange="importCsv(event)" hidden />
   </div>
 
   <div class="table-scroll">
@@ -147,6 +150,100 @@
     document.getElementById('fItem').value = '';
     document.getElementById('fResult').value = '';
     applyFilters();
+  }
+
+  const csvFields = [
+    ['inspectionNo', '문서번호'],
+    ['inspectionDate', '검사일자'],
+    ['vendor', '업체명'],
+    ['itemName', '품목명'],
+    ['color', '색상'],
+    ['quantity', '수량'],
+    ['inspector', '검사자'],
+    ['result', '검사결과']
+  ];
+
+  function escapeCsvValue(value) {
+    const text = value == null ? '' : String(value);
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  function exportCsv() {
+    const rows = [csvFields.map(([, label]) => label)];
+    filteredRecords.forEach(record => {
+      rows.push(csvFields.map(([field]) => escapeCsvValue(record[field])));
+    });
+    const csv = '\uFEFF' + rows.map(row => row.join(',')).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '검사성적서_' + new Date().toISOString().slice(0, 10) + '.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let value = '';
+    let quoted = false;
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index];
+      if (character === '"') {
+        if (quoted && text[index + 1] === '"') {
+          value += '"';
+          index += 1;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (character === ',' && !quoted) {
+        row.push(value);
+        value = '';
+      } else if ((character === '\n' || character === '\r') && !quoted) {
+        if (character === '\r' && text[index + 1] === '\n') index += 1;
+        row.push(value);
+        if (row.some(cell => cell !== '')) rows.push(row);
+        row = [];
+        value = '';
+      } else {
+        value += character;
+      }
+    }
+    if (value || row.length) {
+      row.push(value);
+      if (row.some(cell => cell !== '')) rows.push(row);
+    }
+    return rows;
+  }
+
+  async function importCsv(event) {
+    const input = event.target;
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      const text = (await file.text()).replace(/^\uFEFF/, '');
+      const rows = parseCsv(text);
+      if (rows.length < 2) throw new Error('헤더와 데이터가 있는 CSV 파일을 선택해 주세요.');
+      const header = rows[0].map(cell => cell.trim());
+      const fieldIndexes = csvFields.map(([, label]) => header.indexOf(label));
+      if (fieldIndexes.some(index => index === -1)) {
+        throw new Error('검사성적서 CSV 형식의 헤더가 아닙니다.');
+      }
+      allRecords = rows.slice(1).map(row => {
+        const record = {};
+        csvFields.forEach(([field], index) => {
+          record[field] = row[fieldIndexes[index]] || '';
+        });
+        if (record.quantity !== '') record.quantity = Number(record.quantity) || record.quantity;
+        return record;
+      });
+      applyFilters();
+    } catch (err) {
+      alert('CSV 불러오기에 실패했습니다: ' + err.message);
+    } finally {
+      input.value = '';
+    }
   }
 
   function renderKpi() {
